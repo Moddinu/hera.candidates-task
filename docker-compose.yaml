@@ -6,6 +6,8 @@ services:
     container_name: rivertech-kafka-zookeeper
     ports:
       - "2181:2181"
+    networks:
+      - rivertech-network       
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -20,6 +22,8 @@ services:
       - "9092:9092"
       - "9101:9101"
       - "29092:29092"
+    networks:
+      - rivertech-network 
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'rivertech-kafka-zookeeper:2181'
@@ -40,6 +44,7 @@ services:
       CONFLUENT_METRICS_ENABLE: 'true'
       CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
 
+
   rivertech-schema-registry:
     image: confluentinc/cp-schema-registry:7.5.0
     hostname: rivertech-schema-registry
@@ -48,6 +53,8 @@ services:
       - rivertech-kafka-broker
     ports:
       - "8085:8085"
+    networks:
+      - rivertech-network       
     environment:
       SCHEMA_REGISTRY_HOST_NAME: rivertech-schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'rivertech-kafka-broker:29092'
@@ -69,6 +76,8 @@ services:
                 url: "http://rivertech-schema-registry:8085"
     ports:
       - 8080:8080
+    networks:
+      - rivertech-network       
     links:
       - rivertech-kafka-broker
       - rivertech-schema-registry
@@ -79,11 +88,13 @@ services:
     container_name: rivertech-clickhouse-01
     hostname: rivertech-clickhouse-01
     volumes:
-      - ${PWD}/fs/volumes/clickhouse-01/etc/clickhouse-server/config.d/config.xml:/etc/clickhouse-server/config.d/config.xml
-      - ${PWD}/fs/volumes/clickhouse-01/etc/clickhouse-server/users.d/users.xml:/etc/clickhouse-server/users.d/users.xml
+      - ./fs/volumes/clickhouse-01/etc/clickhouse-server/config.d/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ./fs/volumes/clickhouse-01/etc/clickhouse-server/users.d/users.xml:/etc/clickhouse-server/users.d/users.xml
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9500:9500"
+    networks:
+      - rivertech-network        
     depends_on:
       - rivertech-clickhouse-keeper-01
       
@@ -93,21 +104,51 @@ services:
     container_name: rivertech-clickhouse-02
     hostname: rivertech-clickhouse-02
     volumes:
-      - ${PWD}/fs/volumes/clickhouse-02/etc/clickhouse-server/config.d/config.xml:/etc/clickhouse-server/config.d/config.xml
-      - ${PWD}/fs/volumes/clickhouse-02/etc/clickhouse-server/users.d/users.xml:/etc/clickhouse-server/users.d/users.xml
+      - ./fs/volumes/clickhouse-02/etc/clickhouse-server/config.d/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ./fs/volumes/clickhouse-02/etc/clickhouse-server/users.d/users.xml:/etc/clickhouse-server/users.d/users.xml
     ports:
       - "127.0.0.1:8124:8123"
       - "127.0.0.1:9501:9500"
+    networks:
+      - rivertech-network     
     depends_on:
       - rivertech-clickhouse-keeper-01
+
   rivertech-clickhouse-keeper-01:
     image: "clickhouse/clickhouse-keeper:23.4-alpine"
     user: "101:101"
     container_name: rivertech-clickhouse-keeper-01
     hostname: rivertech-clickhouse-keeper-01
     volumes:
-     - ${PWD}/fs/volumes/clickhouse-keeper-01/etc/clickhouse-keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml
+     - ./fs/volumes/clickhouse-keeper-01/etc/clickhouse-keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml
     ports:
         - "127.0.0.1:9181:9181"
+    networks:
+      - rivertech-network       
+
+  rivertech-python-server:
+    build: .
+    container_name: rivertech-python-server
+    ports:
+      - "8000:8000"
+    networks:
+      - rivertech-network
+    environment:
+      KAFKA_BROKER: 'rivertech-kafka-broker:29092'
+      KAFKA_TOPIC : 'staging-bets'
+
+  rivertech-tabix:
+    image: spoonest/clickhouse-tabix-web-client
+    container_name: rivertech-tabix
+    ports:
+      - "8088:80"
+    environment:
+      - CLICKHOUSE_HOST=rivertech-clickhouse-01
+      - CLICKHOUSE_PORT=8123
+    networks:
+      - rivertech-network
+
+networks:
+  rivertech-network:
 
 

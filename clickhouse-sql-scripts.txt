@@ -1,0 +1,37 @@
+-- Create a Database
+CREATE DATABASE IF NOT EXISTS game_data;
+
+USE game_data;
+-- Create a Table for Game Data
+CREATE TABLE IF NOT EXISTS game_rounds (
+    created_timestamp DateTime,
+    game_instance_id UUID,
+    user_id UInt32,
+    game_id UInt32,
+    real_amount_bet Float64,
+    bonus_amount_bet Float64,
+    real_amount_win Float64,
+    bonus_amount_win Float64,
+    game_name String,
+    provider String
+) ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(created_timestamp)
+ORDER BY (created_timestamp, game_instance_id, user_id, game_id)
+
+-- Create a Materialized View for Hourly Aggregation
+CREATE MATERIALIZED VIEW IF NOT EXISTS game_rounds_hourly_mv
+ENGINE = AggregatingMergeTree
+PARTITION BY toYYYYMMDD(created_timestamp)
+ORDER BY (created_timestamp, user_id, game_id) AS
+SELECT
+    toStartOfHour(created_timestamp) AS created_hour,
+    user_id,
+    game_id,
+    sum(real_amount_bet) AS total_real_amount_bet,
+    sum(bonus_amount_bet) AS total_bonus_amount_bet,
+    sum(real_amount_win) AS total_real_amount_win,
+    sum(bonus_amount_win) AS total_bonus_amount_win,
+    uniqExact(game_instance_id) AS unique_games_played,
+    count() AS rounds_played
+FROM game_data.game_rounds
+GROUP BY created_hour, user_id, game_id;

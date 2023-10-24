@@ -55,4 +55,12 @@
         <shard>01</shard>
         <replica>01</replica>
     </macros>
+    <http_server>
+        <headers>
+            <add name="Access-Control-Allow-Origin" value="http://localhost:8088" />
+            <add name="Access-Control-Allow-Credentials" value="true" />
+            <add name="Access-Control-Allow-Methods" value="GET, POST, OPTIONS" />
+            <add name="Access-Control-Allow-Headers" value="Content-Type, Authorization" />
+        </headers>
+    </http_server>    
 </clickhouse>
