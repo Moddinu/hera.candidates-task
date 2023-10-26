@@ -5,7 +5,7 @@ USE game_data;
 -- Create a Table for Game Data
 CREATE TABLE IF NOT EXISTS game_rounds (
     created_timestamp DateTime,
-    game_instance_id UUID,
+    game_instance_id UInt32,
     user_id UInt32,
     game_id UInt32,
     real_amount_bet Float64,
@@ -35,3 +35,39 @@ SELECT
     count() AS rounds_played
 FROM game_data.game_rounds
 GROUP BY created_hour, user_id, game_id;
+
+
+
+-- Hook Kafka Stream
+CREATE TABLE kafka_stream (
+    created_timestamp String,
+    game_instance_id UInt32,
+    user_id UInt32,
+    game_id UInt32,
+    real_amount_bet Float64,
+    bonus_amount_bet Float64,
+    real_amount_win Float64,
+    bonus_amount_win Float64,
+    game_name String,
+    provider String
+) ENGINE = Kafka
+SETTINGS kafka_broker_list = 'rivertech-kafka-broker:29092',
+         kafka_topic_list = 'staging-bets',
+         kafka_group_name = 'clickhouse-staging-bets-consumer',
+         kafka_format = 'AvroConfluent',
+         format_avro_schema_registry_url = 'http://rivertech-schema-registry:8085';
+
+-- View to copy from the stream table to our table game_rounds
+CREATE MATERIALIZED VIEW kafka_to_game_rounds_mv TO game_rounds AS
+SELECT 
+    created_timestamp,
+    game_instance_id,
+    user_id,
+    game_id,
+    real_amount_bet,
+    bonus_amount_bet,
+    real_amount_win,
+    bonus_amount_win,
+    game_name,
+    provider
+FROM kafka_stream;

@@ -150,5 +150,6 @@ services:
 
 networks:
   rivertech-network:
+     driver: bridge
 
 
