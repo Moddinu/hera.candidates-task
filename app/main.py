@@ -1,21 +1,21 @@
 import os
-import json
+import logging
 import logging.config
-from io import BytesIO
+import pandas as pd
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 
 from confluent_kafka import avro
 from confluent_kafka.avro import AvroProducer
-import csv
 
-import pandas as pd
+from clickhouse_driver import Client
 
+from typing import List, Optional,Dict
+from datetime import datetime, date
 
 logging.config.fileConfig('logging_config.ini')
 logger = logging.getLogger('sampleLogger')
-
 
 def delivery_report(err, msg):
     if err is not None:
@@ -57,20 +57,11 @@ def validate_record(record):
     # Additional validation checks can be added here
     return True
 
-def record_to_avro(record, schema):
-    # Create a buffer to store the Avro binary data
-    buffer = BytesIO()
-    
-    # Write the record to the buffer in Avro format
-    try:
-        writer(buffer, schema, [record])  # Pass the record as a list of one dictionary
-    except Exception as e:
-        logging.error(f"Avro serialization failed: {str(e)}")
-        raise
-    
-    # Get the binary Avro data
-    avro_data = buffer.getvalue()
-    return avro_data
+    player_id: int
+    game_id: int
+    total_bet: float
+    total_win: float
+    total_rounds: int
 
 betting_data_avro_schema = avro.load('./schemas/bets.avsc')
 
@@ -96,10 +87,7 @@ async def create_upload_file(file:UploadFile = File(...)):
         for index,record in enumerate(df.to_dict(orient='records')):
             if validate_record(record):
                     try:
-                        # avro_data = record_to_avro(record, betting_data_avro_schema)
                         avroProducer.produce(topic=topic, value=record,callback=delivery_report)
-                        # events_processed = avroProducer.poll(1)
-                        # logger.info(f"events_processed: {events_processed}")
                     except Exception as e:
                         logger.error(f"Failed to serialize or send record at index {index}: {e}")
             else:
@@ -111,3 +99,62 @@ async def create_upload_file(file:UploadFile = File(...)):
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
         return JSONResponse(content={"detail": "An internal error occurred"}, status_code=500)
+    
+# Initialize ClickHouse client
+clickhouse_client = Client(host='rivertech-clickhouse-01',port=9500, user='default', password='', database='game_data')
+
+@app.get("/aggregates/")
+async def get_aggregates(
+    player_id: Optional[int] = None,
+    game_id: Optional[int] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    skip: int = 0,
+    limit: int = 10
+) -> List[Dict[str, str]]:
+    query_conditions = []
+    
+    if player_id is not None:
+        query_conditions.append(f"user_id = {player_id}")
+    if game_id is not None:
+        query_conditions.append(f"game_id = {game_id}")
+    if date_from is not None and date_to is not None:
+        query_conditions.append(f"created_hour  >= '{date_from.strftime('%Y-%m-%d')}' AND date <= '{date_to.strftime('%Y-%m-%d')}'")
+    
+    query_condition = " AND ".join(query_conditions) if query_conditions else "1"
+    
+    query = f"""
+    SELECT created_hour, user_id, game_id, 
+           total_real_amount_bet, total_bonus_amount_bet, 
+           total_real_amount_win, total_bonus_amount_win, 
+           unique_games_played, rounds_played
+    FROM game_rounds_hourly_mv
+    WHERE {query_condition}
+    LIMIT {skip}, {limit}
+    """
+    
+    try:
+        result = clickhouse_client.execute(query)
+        return [
+            {
+                "created_hour": row[0].strftime('%Y-%m-%d %H:%M:%S'), 
+                "user_id": row[1], 
+                "game_id": row[2], 
+                "total_real_amount_bet": row[3], 
+                "total_bonus_amount_bet": row[4], 
+                "total_real_amount_win": row[5], 
+                "total_bonus_amount_win": row[6], 
+                "unique_games_played": row[7], 
+                "rounds_played": row[8]
+            } 
+            for row in result
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    try:
+        import uvicorn
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    except Exception as e:
+        logging.critical(f"Failed to start the application: {str(e)}")

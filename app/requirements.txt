@@ -6,3 +6,4 @@ fastavro
 confluent_kafka 
 avro-python3
 requests
+clickhouse_driver

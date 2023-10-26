@@ -1,7 +1,6 @@
 -- Create a Database
 CREATE DATABASE IF NOT EXISTS game_data;
 
-USE game_data;
 -- Create a Table for Game Data
 CREATE TABLE IF NOT EXISTS game_rounds (
     created_timestamp DateTime,
@@ -21,8 +20,8 @@ ORDER BY (created_timestamp, game_instance_id, user_id, game_id)
 -- Create a Materialized View for Hourly Aggregation
 CREATE MATERIALIZED VIEW IF NOT EXISTS game_rounds_hourly_mv
 ENGINE = AggregatingMergeTree
-PARTITION BY toYYYYMMDD(created_timestamp)
-ORDER BY (created_timestamp, user_id, game_id) AS
+PARTITION BY toYYYYMMDD(created_hour)
+ORDER BY (created_hour, user_id, game_id) AS
 SELECT
     toStartOfHour(created_timestamp) AS created_hour,
     user_id,
@@ -35,7 +34,6 @@ SELECT
     count() AS rounds_played
 FROM game_data.game_rounds
 GROUP BY created_hour, user_id, game_id;
-
 
 
 -- Hook Kafka Stream
@@ -60,7 +58,7 @@ SETTINGS kafka_broker_list = 'rivertech-kafka-broker:29092',
 -- View to copy from the stream table to our table game_rounds
 CREATE MATERIALIZED VIEW kafka_to_game_rounds_mv TO game_rounds AS
 SELECT 
-    created_timestamp,
+    parseDateTimeBestEffort(created_timestamp) AS created_timestamp,
     game_instance_id,
     user_id,
     game_id,
