@@ -1,11 +1,11 @@
 -- Create a Database
-CREATE DATABASE IF NOT EXISTS game_data;
+CREATE DATABASE IF NOT EXISTS game_data
 
 -- Create a Table for Game Data
 CREATE TABLE IF NOT EXISTS game_rounds (
     created_timestamp DateTime,
     game_instance_id UInt32,
-    user_id UInt32,
+    user_id String,
     game_id UInt32,
     real_amount_bet Float64,
     bonus_amount_bet Float64,
@@ -33,14 +33,14 @@ SELECT
     uniqExact(game_instance_id) AS unique_games_played,
     count() AS rounds_played
 FROM game_data.game_rounds
-GROUP BY created_hour, user_id, game_id;
+GROUP BY created_hour, user_id, game_id
 
 
 -- Hook Kafka Stream
 CREATE TABLE kafka_stream (
     created_timestamp String,
     game_instance_id UInt32,
-    user_id UInt32,
+    user_id String,
     game_id UInt32,
     real_amount_bet Float64,
     bonus_amount_bet Float64,

@@ -1,6 +1,0 @@
-created_timestamp,game_instance_id,user_id,game_id,real_amount_bet,bonus_amount_bet,real_amount_win,bonus_amount_win,game_name,provider
-2023-10-23T12:00:00Z,1001,101,2001,100.0,20.0,150.0,30.0,Blackjack,NetEnt
-2023-10-23T12:10:00Z,1002,102,2002,200.0,40.0,250.0,50.0,Roulette,Playtech
-2023-10-23T12:20:00Z,1003,103,2003,300.0,60.0,350.0,70.0,Poker,Microgaming
-2023-10-23T12:30:00Z,1004,104,2004,400.0,80.0,450.0,90.0,Slots,Evolution Gaming
-2023-10-23T12:40:00Z,1005,105,2005,500.0,100.0,550.0,110.0,Baccarat,Play'n GO

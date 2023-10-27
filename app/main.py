@@ -2,18 +2,23 @@ import os
 import logging
 import logging.config
 import pandas as pd
+import shutil
+from decimal import Decimal, InvalidOperation
+import numpy as np
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException,BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from confluent_kafka import avro
 from confluent_kafka.avro import AvroProducer
 
 from clickhouse_driver import Client
+from tempfile import NamedTemporaryFile
 
 from typing import List, Optional,Dict
 from datetime import datetime, date
 
+# Initialize loggers
 logging.config.fileConfig('logging_config.ini')
 logger = logging.getLogger('sampleLogger')
 
@@ -42,15 +47,16 @@ def validate_record(record):
         logger.error("Invalid datetime format in 'created_timestamp'")
         return False
     
-    # Ensure monetary and ID fields are numeric
+    # Ensure monetary and ID fields aacre numeric
     numeric_fields = [
-        'game_instance_id', 'user_id', 'game_id', 
+        'game_instance_id','game_id', 
         'real_amount_bet', 'bonus_amount_bet', 'real_amount_win', 'bonus_amount_win'
     ]
 
     for field in numeric_fields:
-        value = pd.to_numeric(record[field], errors='coerce')
-        if pd.isna(value):
+        try:
+            Decimal(record[field])
+        except (InvalidOperation, ValueError):
             logger.error(f"Field '{field}' must be numeric")
             return False
 
@@ -70,7 +76,13 @@ broker = os.getenv('KAFKA_BROKER', 'rivertech-kafka-broker:29092')
 topic = os.getenv('KAFKA_TOPIC', 'staging-bets')
 schema_registry_url = os.getenv('SCHEMA_REGISTRY_URL', 'http://rivertech-schema-registry:8085')
 
-AvroProducerConf = {'bootstrap.servers': 'rivertech-kafka-broker:29092','schema.registry.url': schema_registry_url,}
+AvroProducerConf = {
+                    'bootstrap.servers': 'rivertech-kafka-broker:29092',
+                    'schema.registry.url': schema_registry_url,
+                    'queue.buffering.max.kbytes': 1024*10,  # Increase the buffer size
+                    'batch.num.messages': 10000,  # Increase the number of messages to batch together
+                    'linger.ms': 5  # Increase the linger time
+                   }
 
 avroProducer = AvroProducer(AvroProducerConf, default_value_schema=betting_data_avro_schema)
 
@@ -83,11 +95,15 @@ async def create_upload_file(file:UploadFile = File(...)):
         if not file.filename.endswith('.csv'):
             raise HTTPException(status_code=400, detail="File is not a CSV")
          
-        df = pd.read_csv(file.file)
+        df = pd.read_csv(file.file,encoding='utf-16-be')
+        df.replace("NaN", np.nan, inplace=True)
+        
         for index,record in enumerate(df.to_dict(orient='records')):
             if validate_record(record):
                     try:
+                        logger.info(f"sending message")
                         avroProducer.produce(topic=topic, value=record,callback=delivery_report)
+                        avroProducer.poll(0)
                     except Exception as e:
                         logger.error(f"Failed to serialize or send record at index {index}: {e}")
             else:
@@ -152,9 +168,70 @@ async def get_aggregates(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
+async def run_reconciliation(file_path: str):
+
+    reconciliation_function_logger = logging.getLogger("reconciliation_function_logger")
+    reconciliation_function_logger.setLevel(logging.INFO)
+    handler = logging.FileHandler('reconciliation_function.log')
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    reconciliation_function_logger.addHandler(handler)
+
+    chunk_size = 500  # Define your chunk size
+
     try:
-        import uvicorn
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        # Read and process the CSV file in chunks
+        for chunk_number, chunk in enumerate(pd.read_csv(file_path,encoding='utf-16-be', chunksize=chunk_size, iterator=True,na_values=["NaN"])):
+
+            chunk = chunk.sort_values(by=['game_instance_id']).reset_index(drop=True)
+
+            # Convert 'created_timestamp' to 'created_hour'
+            if 'created_timestamp' in chunk.columns:
+                try:
+                    chunk['created_timestamp'] = pd.to_datetime(chunk['created_timestamp'], format='%Y-%m-%d %H:%M:%S')
+                except Exception as e:
+                    reconciliation_function_logger.error(f"Error converting timestamp in chunk {chunk_number}: {str(e)}")
+                    continue
+            else:
+                reconciliation_function_logger.error(f"'created_timestamp' column not found in chunk {chunk_number}")
+                continue
+
+
+            query = f"""
+            SELECT * FROM game_rounds
+            ORDER BY game_instance_id
+            LIMIT {chunk_size} OFFSET {chunk_number * chunk_size}
+            """
+            clickhouse_data = pd.DataFrame(clickhouse_client.execute(query))
+            clickhouse_data.columns = ['created_timestamp', 'game_instance_id', 'user_id', 'game_id', 'real_amount_bet', 'bonus_amount_bet', 'real_amount_win', 'bonus_amount_win', 'game_name', 'provider']
+            clickhouse_data['created_timestamp'] = pd.to_datetime(clickhouse_data['created_timestamp'], format='%Y-%m-%d %H:%M:%S')
+
+            # Reconciliation logic
+            discrepancies = chunk.merge(clickhouse_data, indicator=True, how='outer').query('_merge != "both"')
+            if not discrepancies.empty:
+                reconciliation_function_logger.info(f"CSV Chunk:\n{chunk.to_string()}")
+                reconciliation_function_logger.info(f"Database Data:\n{clickhouse_data.to_string()}")
+                reconciliation_function_logger.error(f"Discrepancies found in chunk {chunk_number}")
+                discrepancy_string = discrepancies.to_string(index=False)
+                reconciliation_function_logger.error(f"Discrepancies found:\n{discrepancy_string}")
+                break
+            else:
+                reconciliation_function_logger.info(f"No discrepancies found in chunk {chunk_number}")
+
+            reconciliation_function_logger.info(f"Processed chunk {chunk_number}")
+
     except Exception as e:
-        logging.critical(f"Failed to start the application: {str(e)}")
+        logger.error(f"Error processing file: {str(e)}")
+
+    reconciliation_function_logger.info("Reconciliation complete")
+
+@app.post("/reconcile/")
+async def reconcile(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    # Save uploaded file to a temporary file
+    with NamedTemporaryFile(delete=False) as temp_file:
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file_path = temp_file.name
+
+    # Add reconciliation task to background
+    background_tasks.add_task(run_reconciliation, temp_file_path)
+    return {"status": "Reconciliation started"}

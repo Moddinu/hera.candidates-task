@@ -4,7 +4,7 @@
     "fields": [
         {"name": "created_timestamp", "type": "string"},
         {"name": "game_instance_id", "type": "long"},
-        {"name": "user_id", "type": "long"},
+        {"name": "user_id", "type": "string"},
         {"name": "game_id", "type": "long"},
         {"name": "real_amount_bet", "type": "double"},
         {"name": "bonus_amount_bet", "type": "double"},
