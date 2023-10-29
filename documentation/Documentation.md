@@ -54,7 +54,7 @@ Using the default settings AvroProducer was used to publish the messages to the 
 
 ## ClickHouse Integration: Set up a ClickHouse database and tables to consume, store data, and implement the materialized views for fact aggregation for the game round data. The aggregation should also be grouped `hourly` by `player_id` and `game_id`.
 
-In the queries folder there are 5 queries that we need for the app to run: 
+In the  [queries](https://github.com/Moddinu/hera.candidates-task/blob/main/queries/clickhouse-sql-scripts.txt "sql queries") queries folder there are 5 queries that we need for the app to run: 
 
     1. Creates the database
     2. Creates the table for game rounds
@@ -130,3 +130,12 @@ A log file showing that the csv records are found on ClickHouse
 Thank you for the opportunity to tackle this technical test, which has been both challenging and great learning experience. I've gained valuable insights into data processing with Kafka, Avro, and ClickHouse, and I'm keen to refine my skills further based on your feedback.
 
 I welcome any comments or suggestions on my work, as I am committed to continuous learning and improvement. For any questions or assistance needed to run the project, please contact me at mattxuer@gmail.com.
+
+
+## References
+    - https://altinity.com/blog/2020-5-21-clickhouse-kafka-engine-tutorial
+    - https://dzone.com/articles/clickhouse-kafka-engine-tutorial
+    - https://hub.docker.com/r/spoonest/clickhouse-tabix-web-client
+    - https://fastapi.tiangolo.com/tutorial/
+    - https://www.redhat.com/en/topics/integration/what-is-a-kafka-service
+
