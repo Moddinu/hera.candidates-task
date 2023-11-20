@@ -5,6 +5,7 @@ import pandas as pd
 import shutil
 from decimal import Decimal, InvalidOperation
 import numpy as np
+import math
 
 from fastapi import FastAPI, File, UploadFile, HTTPException,BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -77,7 +78,7 @@ topic = os.getenv('KAFKA_TOPIC', 'staging-bets')
 schema_registry_url = os.getenv('SCHEMA_REGISTRY_URL', 'http://rivertech-schema-registry:8085')
 
 AvroProducerConf = {
-                    'bootstrap.servers': 'rivertech-kafka-broker:29092',
+                    'bootstrap.servers': broker,
                     'schema.registry.url': schema_registry_url,
                     'queue.buffering.max.kbytes': 1024*10,  # Increase the buffer size
                     'batch.num.messages': 10000,  # Increase the number of messages to batch together
@@ -99,11 +100,12 @@ async def create_upload_file(file:UploadFile = File(...)):
         df.replace("NaN", np.nan, inplace=True)
         
         for index,record in enumerate(df.to_dict(orient='records')):
+            avroProducer.poll(0)
+
             if validate_record(record):
                     try:
                         logger.info(f"sending message")
                         avroProducer.produce(topic=topic, value=record,callback=delivery_report)
-                        avroProducer.poll(0)
                     except Exception as e:
                         logger.error(f"Failed to serialize or send record at index {index}: {e}")
             else:
@@ -121,23 +123,26 @@ clickhouse_client = Client(host='rivertech-clickhouse-01',port=9500, user='defau
 
 @app.get("/aggregates/")
 async def get_aggregates(
-    player_id: Optional[int] = None,
-    game_id: Optional[int] = None,
-    date_from: Optional[datetime] = None,
-    date_to: Optional[datetime] = None,
+    player_id: Optional[str] = None,
+    game_id: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     skip: int = 0,
     limit: int = 10
 ) -> List[Dict[str, str]]:
     query_conditions = []
-    
+
+    # Sanitize and validate inputs before adding them to the query
     if player_id is not None:
-        query_conditions.append(f"user_id = {player_id}")
+        # Ensure player_id is properly escaped or matches expected format
+        query_conditions.append(f"user_id = '{player_id}'")
     if game_id is not None:
-        query_conditions.append(f"game_id = {game_id}")
+        # Ensure game_id is properly escaped or matches expected format
+        query_conditions.append(f"game_id = '{game_id}'")
     if date_from is not None and date_to is not None:
-        query_conditions.append(f"created_hour  >= '{date_from.strftime('%Y-%m-%d')}' AND date <= '{date_to.strftime('%Y-%m-%d')}'")
-    
-    query_condition = " AND ".join(query_conditions) if query_conditions else "1"
+        query_conditions.append(f"created_hour >= '{date_from.strftime('%Y-%m-%d')}' AND created_hour <= '{date_to.strftime('%Y-%m-%d')}'")
+
+    query_condition = " AND ".join(query_conditions) if query_conditions else "1=1"
     
     query = f"""
     SELECT created_hour, user_id, game_id, 
@@ -148,23 +153,19 @@ async def get_aggregates(
     WHERE {query_condition}
     LIMIT {skip}, {limit}
     """
-    
+  
     try:
-        result = clickhouse_client.execute(query)
-        return [
-            {
-                "created_hour": row[0].strftime('%Y-%m-%d %H:%M:%S'), 
-                "user_id": row[1], 
-                "game_id": row[2], 
-                "total_real_amount_bet": row[3], 
-                "total_bonus_amount_bet": row[4], 
-                "total_real_amount_win": row[5], 
-                "total_bonus_amount_win": row[6], 
-                "unique_games_played": row[7], 
-                "rounds_played": row[8]
-            } 
-            for row in result
-        ]
+        results = clickhouse_client.execute(query)
+
+        keys = ["created_hour", "user_id", "game_id", "total_real_amount_bet", "total_bonus_amount_bet", "total_real_amount_win", "total_bonus_amount_win", "unique_games_played", "rounds_played"]
+        list_of_dicts = []
+        
+        for record in results:
+            record_dict = {keys[i]: (None if (i == 4 and math.isnan(record[i])) else record[i]) for i in range(len(keys))}
+            list_of_dicts.append(record_dict)
+
+        return list_of_dicts
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
